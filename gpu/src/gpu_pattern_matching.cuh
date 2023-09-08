@@ -8,14 +8,18 @@
 
 /**
  * @note `buffer_size`实际上是每个节点的最大邻居数量，而非所用空间大小
+ * 当采取 bitmap 模式的时候，`buffer_size` 即为 bitmap 的大小（以 4 字节为单位）
  *
  * 当用作 MPI 的时候，edge_num 指的是结束的边的编号，此时 dev_cur_edge 初始值并不为 0.
  */
 __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, PatternMatchingDeviceContext *context) {
     __shared__ e_index_t block_edge_idx[WARPS_PER_BLOCK];
     //之后考虑把tmp buffer都放到shared里来（如果放得下）
+#ifdef ARRAY
     extern __shared__ GPUVertexSet block_vertex_set[];
-
+#else
+    extern __shared__ GPUVertexSet_Bitmap block_vertex_set[];
+#endif
     GPUSchedule *schedule = context->dev_schedule;
     uint32_t *tmp = context->dev_tmp;
     uint32_t *edge = (uint32_t *)context->dev_edge;
@@ -31,18 +35,33 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
     int lid = threadIdx.x % THREADS_PER_WARP;            // lane id
     int global_wid = blockIdx.x * WARPS_PER_BLOCK + wid; // global warp id
     e_index_t &edge_idx = block_edge_idx[wid];
+#ifdef ARRAY
     GPUVertexSet *vertex_set = block_vertex_set + wid * num_vertex_sets_per_warp;
+#else
+    GPUVertexSet_Bitmap *vertex_set = block_vertex_set + wid * num_vertex_sets_per_warp;
+#endif
 
     if (lid == 0) {
         edge_idx = 0;
         uint32_t offset = buffer_size * global_wid * num_vertex_sets_per_warp;
         for (int i = 0; i < num_vertex_sets_per_warp; ++i) {
+#ifndef ARRAY
+            vertex_set[i].construct(buffer_size << 5);
+#endif
             vertex_set[i].set_data_ptr(tmp + offset); // 注意这是个指针+整数运算，自带*4
             offset += buffer_size;
         }
     }
+#ifdef ARRAY
     GPUVertexSet &subtraction_set = vertex_set[num_prefixes];
     GPUVertexSet &tmp_set = vertex_set[num_prefixes + 1];
+#else
+    GPUVertexSet_Bitmap &subtraction_set = vertex_set[num_prefixes];
+    GPUVertexSet_Bitmap &tmp_set = vertex_set[num_prefixes + 1];
+
+    // pat2emb[i] means the corresponding vertex in the embedding of the i-th vertex in the pattern
+    uint32_t pat2emb[MAX_DEPTH];
+#endif
 
     __threadfence_block(); //之后考虑把所有的syncthreads都改成syncwarp
 
@@ -56,14 +75,27 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
             edge_idx = atomicAdd(context->dev_cur_edge, 1);
             e_index_t i = edge_idx;
             if (i < edge_num) {
+#ifdef ARRAY
                 subtraction_set.init();
                 subtraction_set.push_back(edge_from[i]);
                 subtraction_set.push_back(edge[i]);
+#else
+                subtraction_set.clear();
+                subtraction_set.insert_and_update(edge_from[i]);
+                subtraction_set.insert_and_update(edge[i]);
+                pat2emb[0] = edge_from[i];
+                pat2emb[1] = edge[i];
+#endif
             }
         }
 
         __threadfence_block();
 
+        // __syncthreads();
+        // if(lid == 0){
+        //     printf("subtraction_set.size1 = %u\n", subtraction_set.get_size());
+        // }
+        // __syncthreads();
         e_index_t i = edge_idx;
         if (i >= edge_num)
             break;
@@ -93,9 +125,19 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
         if (is_zero)
             continue;
 
+        // __syncthreads();
+        // if(lid == 0)
+        //     printf("subtraction_set.size2 = %u\n", subtraction_set.get_size());
+        // __syncthreads();
         unsigned long long local_sum = 0; // local sum (corresponding to an edge index)
+#ifdef ARRAY
         GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
+#else
+        GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex, pat2emb);
+#endif
         sum += local_sum;
+        if(local_sum && lid == 0)
+            printf("local_sum = %d\n", local_sum);
     }
 
     if (lid == 0) {

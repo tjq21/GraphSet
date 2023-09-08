@@ -31,8 +31,11 @@ double pattern_matching(Graph *g, const Schedule_IEP &schedule_iep) {
     PatternMatchingDeviceContext *context;
     gpuErrchk(cudaMallocManaged((void **)&context, sizeof(PatternMatchingDeviceContext)));
     context->init(g, schedule_iep);
-
+#ifdef ARRAY
     uint32_t buffer_size = VertexSet::max_intersection_size;
+#else
+    uint32_t buffer_size = (g->v_cnt + 31) / 32;
+#endif
     int max_active_blocks_per_sm;
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_active_blocks_per_sm, gpu_pattern_matching, THREADS_PER_BLOCK, context->block_shmem_size);
     fprintf(stderr, "max number of active warps per SM: %d\n", max_active_blocks_per_sm * WARPS_PER_BLOCK);
@@ -66,10 +69,11 @@ int main(int argc,char *argv[]) {
     using std::chrono::system_clock;
     auto t1 = system_clock::now();
 
-    bool ok = D.fast_load(g, argv[1]);
+    // bool ok = D.fast_load(g, argv[1]);
+    bool ok = D.load_complete(g, 5);
 
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s graph_file pattern_size\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s pattern_size\n", argv[0]);
         return 1;
     }
 
@@ -77,14 +81,18 @@ int main(int argc,char *argv[]) {
         fprintf(stderr, "data load failure :-(\n");
         return 1;
     } 
-
+#ifdef ARRAY
+    fprintf(stderr, "SET-BY-ARRAY\n");
+#else
+    fprintf(stderr, "SET-BY-BITMAP\n");
+#endif
     auto t2 = system_clock::now();
     auto load_time = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1);
     fprintf(stderr, "Load data success! time: %g seconds\n", load_time.count() / 1.0e6);
 
     allTime.check();
 
-    int pattern_size = atoi(argv[2]);
+    int pattern_size = atoi(argv[1]);
 
     printf("motif_size: %d\n", pattern_size);
 
