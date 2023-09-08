@@ -58,9 +58,6 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
 #else
     GPUVertexSet_Bitmap &subtraction_set = vertex_set[num_prefixes];
     GPUVertexSet_Bitmap &tmp_set = vertex_set[num_prefixes + 1];
-
-    // pat2emb[i] means the corresponding vertex in the embedding of the i-th vertex in the pattern
-    uint32_t pat2emb[MAX_DEPTH];
 #endif
 
     __threadfence_block(); //之后考虑把所有的syncthreads都改成syncwarp
@@ -83,11 +80,14 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
                 subtraction_set.clear();
                 subtraction_set.insert_and_update(edge_from[i]);
                 subtraction_set.insert_and_update(edge[i]);
-                pat2emb[0] = edge_from[i];
-                pat2emb[1] = edge[i];
+                subtraction_set.pat2emb[0] = edge_from[i];
+                subtraction_set.pat2emb[1] = edge[i];
 #endif
             }
         }
+        // __syncwarp();
+// printf("lane %d: pat2emb[1] = %u\n", lid, pat2emb[1]);
+            
 
         __threadfence_block();
 
@@ -133,11 +133,11 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
 #ifdef ARRAY
         GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
 #else
-        GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex, pat2emb);
+        GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
 #endif
         sum += local_sum;
-        if(local_sum && lid == 0)
-            printf("local_sum = %d\n", local_sum);
+        // if(local_sum && lid == 0)
+        //     printf("local_sum = %d\n", local_sum);
     }
 
     if (lid == 0) {

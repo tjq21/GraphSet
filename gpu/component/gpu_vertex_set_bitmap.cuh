@@ -191,6 +191,9 @@ public:
     }
 #endif
 
+    uint32_t pat2emb[7];
+    // pat2emb[i] means the corresponding vertex in the embedding of the i-th vertex in the pattern
+
 private:
     uint32_t vertex_count;
     uint32_t size;
@@ -226,7 +229,6 @@ private:
 __device__ uint32_t GPUVertexSet_Bitmap::subtraction_size(const GPUVertexSet_Bitmap& vset1, const GPUVertexSet_Bitmap& vset2, uint32_t min_vertex){
     // if(min_vertex == 0)
     //     return 0;
-    // TODO: BUG!!!
 
     // warp reduce version
     typedef cub::WarpReduce<uint32_t> WarpReduce;
