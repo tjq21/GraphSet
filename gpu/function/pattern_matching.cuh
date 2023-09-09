@@ -290,8 +290,8 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
 __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertexSet_Bitmap *vertex_set, GPUVertexSet_Bitmap &subtraction_set, GPUVertexSet_Bitmap &tmp_set,
                                           unsigned long long &local_ans, uint32_t *edge, e_index_t *vertex) {
 #endif
-    if(threadIdx.x % THREADS_PER_WARP == 0)
-        // printf("GPU_PatterMatchingFunc<%d>, schedule.size = %u, IEP_opt_num = %u\n", depth, schedule->get_size(), schedule->get_in_exclusion_optimize_num());
+    // if(threadIdx.x % THREADS_PER_WARP == 0)
+    //     printf("GPU_PatterMatchingFunc<%d>, schedule.size = %u, IEP_opt_num = %u\n", depth, schedule->get_size(), schedule->get_in_exclusion_optimize_num());
     if (depth == schedule->get_size() - schedule->get_in_exclusion_optimize_num()) {
         GPU_pattern_matching_final_in_exclusion(schedule, vertex_set, subtraction_set, tmp_set, local_ans, edge, vertex);
         // if(threadIdx.x % 32 == 0) printf("after in_exclusion<%d>, local_ans = %llu\n", depth, local_ans);
