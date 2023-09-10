@@ -22,7 +22,8 @@ enum DataType {
     Wiki_Vote,
     YouTube,
     Friendster,
-    Invalid
+    Invalid,
+    SelfDefined
 };
 
 constexpr long long Patents_tri_cnt = 7515023LL;

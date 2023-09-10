@@ -56,7 +56,7 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
 #else
             log("  Shared memory for vertex set per block: %ld bytes\n",
                 num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet_Bitmap) +
-                    schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int)) + MAX_DEPTH * sizeof(uint32_t);
+                    schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int));
 #endif
         }
         gpuErrchk(cudaMalloc((void **)&dev_new_order, size_new_order));
@@ -87,9 +87,8 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
         block_shmem_size = num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet) +
                            schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int);
 #else
-        size_t tmp_size = num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet_Bitmap);
-        block_shmem_size = ((tmp_size + 127) & ~127u) +
-                           schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int) + MAX_DEPTH * sizeof(int);
+        block_shmem_size = num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet_Bitmap) +
+                           schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int);
 #endif
 
         dev_schedule->ans_array_offset = block_shmem_size - schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int);
@@ -306,20 +305,21 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
     int loop_size = vset->get_size();
 
     auto loop_data_ptr = vset->get_data_ptr();
+#endif
     uint32_t min_vertex = 0xffffffff;
     // for all restrictions that points to depth (in pattern), get the mininum index in the partial embedding where v_index maps to res.first
     // The newly explored vertex ought to be smaller than all restricted vertices.
-    for (int i = schedule->get_restrict_last(depth); i != -1; i = schedule->get_restrict_next(i))
+    for (int i = schedule->get_restrict_last(depth); i != -1; i = schedule->get_restrict_next(i)){
+#ifdef ARRAY
         if (min_vertex > subtraction_set.get_data(schedule->get_restrict_index(i)))
             min_vertex = subtraction_set.get_data(schedule->get_restrict_index(i));
-
-    // can be optimized via code generation
-    if (schedule->is_vertex_induced) {
-        GPUVertexSet &diff_buf = vertex_set[schedule->get_total_prefix_num() + depth];
-        remove_anti_edge_vertices(diff_buf, vertex_set[loop_set_prefix_id], *schedule, subtraction_set, depth, edge, vertex);
-        loop_data_ptr = diff_buf.get_data_ptr();
-        loop_size = diff_buf.get_size();
-        vset = &diff_buf;
+#else
+        if (min_vertex > subtraction_set.pat2emb[schedule->get_restrict_index(i)]){
+            // printf("pat2emb[%u] = %u\n", schedule->get_restrict_index(i), subtraction_set.pat2emb[schedule->get_restrict_index(i)]);
+            min_vertex = subtraction_set.pat2emb[schedule->get_restrict_index(i)];
+        }
+        __threadfence_block();
+#endif
     }
 
     if (depth == schedule->get_size() - 1 && schedule->get_in_exclusion_optimize_num() == 0) {
@@ -335,13 +335,25 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
                 printf("%d %d %d %d\n", subtraction_set.get_data(0), subtraction_set.get_data(1), subtraction_set.get_data(2), x);
         }
         return;*/
+#ifdef ARRAY
         int size_after_restrict = lower_bound(loop_data_ptr, loop_size, min_vertex);
         // int size_after_restrict = -1;
         local_ans += unordered_subtraction_size(*vset, subtraction_set, size_after_restrict);
+#else
+        // int size_after_restrict = lower_bound(loop_data_ptr, loop_size, min_vertex);
+        local_ans += GPUVertexSet_Bitmap::subtraction_size(*vset, subtraction_set, min_vertex);
+        __threadfence_block();
+        // if(threadIdx.x % THREADS_PER_WARP == 0) printf("return 2\n");
+#endif
         return;
     }
+
+#ifdef ARRAY
     for (int i = 0; i < loop_size; ++i) {
         uint32_t v = loop_data_ptr[i];
+#else
+    for (uint32_t v = vset->get_first(); v != UINT32_MAX; v = vset->get_next(v)) {
+#endif
         if (min_vertex <= v)
             break;
         if (subtraction_set.has_data(v))
@@ -359,92 +371,28 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
         if (is_zero)
             continue;
         if (depth + 1 != MAX_DEPTH) {
-            if (threadIdx.x % THREADS_PER_WARP == 0)
-                subtraction_set.push_back(v);
-            __threadfence_block();
-        }
-        GPU_pattern_matching_func<depth + 1>(schedule, vertex_set, subtraction_set, tmp_set, local_ans, edge, vertex);
-        if (depth + 1 != MAX_DEPTH) {
-            if (threadIdx.x % THREADS_PER_WARP == 0)
-                subtraction_set.pop_back();
-            __threadfence_block();
-        }
-    }
-#else
-    uint32_t min_vertex = 0xffffffff;
-    // for all restrictions that points to depth (in pattern), get the mininum index in the partial embedding where v_index maps to res.first
-    // The newly explored vertex ought to be smaller than all restricted vertices.
-    for (int i = schedule->get_restrict_last(depth); i != -1; i = schedule->get_restrict_next(i)){
-        if (min_vertex > subtraction_set.pat2emb[schedule->get_restrict_index(i)]){
-            // printf("pat2emb[%u] = %u\n", schedule->get_restrict_index(i), subtraction_set.pat2emb[schedule->get_restrict_index(i)]);
-            min_vertex = subtraction_set.pat2emb[schedule->get_restrict_index(i)];
-        }
-        __threadfence_block();
-    }
-
-    // can be optimized via code generation
-    if (schedule->is_vertex_induced) {
-        GPUVertexSet_Bitmap &diff_buf = vertex_set[schedule->get_total_prefix_num() + depth];
-        remove_anti_edge_vertices(diff_buf, vertex_set[loop_set_prefix_id], *schedule, subtraction_set, depth, edge, vertex);
-        vset = &diff_buf;
-    }
-    if (depth == schedule->get_size() - 1 && schedule->get_in_exclusion_optimize_num() == 0) {
-        // int size_after_restrict = lower_bound(loop_data_ptr, loop_size, min_vertex);
-        local_ans += GPUVertexSet_Bitmap::subtraction_size(*vset, subtraction_set, min_vertex);
-        // if(threadIdx.x % THREADS_PER_WARP == 0) printf("return 2\n");
-        return;
-    }
-    /**
-     * for v in loop_data_ptr:
-     *   if(min_vertex <= v) break;
-     *   if(subtraction_set.has_data(v)) continue;
-     *   for prefix in schedule->get_last(depth)(array):
-     *     vertex_set[prefix_id].build_vertex_set(self, v's neighbor);
-     *     if(vertex_set[prefix_id].get_non_zerp_cnt() == breaksize) {iszero=true, break}
-    */
-    // printf("Starting...size of vset=%d, global_tid=%d\n", vset->get_size(), blockIdx.x * THREADS_PER_BLOCK + threadIdx.x);
-    // __syncwarp();
-    for (uint32_t v = vset->get_first(); v != UINT32_MAX; v = vset->get_next(v)) {
-        // printf("01: lane %u, min_vertex = %u, v = %u\n", threadIdx.x % THREADS_PER_WARP, min_vertex, v);
-        if(min_vertex <= v){
-            // printf("01A: lane %u, %u <= %u\n", threadIdx.x % THREADS_PER_WARP, min_vertex, v);
-            break;
-        }
-        // printf("02: lane %u, %u > %u\n", threadIdx.x % THREADS_PER_WARP, min_vertex, v);
-        if (subtraction_set.has_data(v)){
-            // printf("has %u, continue1\n", v);
-            continue;
-        }
-        // printf("03: lane %u\n", threadIdx.x % THREADS_PER_WARP);
-        e_index_t l, r;
-        get_edge_index(v, l, r);
-        bool is_zero = false;
-        for (int prefix_id = schedule->get_last(depth); prefix_id != -1; prefix_id = schedule->get_next(prefix_id)) {
-            vertex_set[prefix_id].build_vertex_set(schedule, vertex_set, &edge[l], r - l, prefix_id);
-            if (vertex_set[prefix_id].get_size() == schedule->get_break_size(prefix_id)) {
-                is_zero = true;
-                break;
-            }
-        }
-        if (is_zero){
-            // printf("04: lane %u iszero, continue2\n", threadIdx.x % THREADS_PER_WARP);
-            continue;
-        }
-        if (depth + 1 != MAX_DEPTH) {
             if (threadIdx.x % THREADS_PER_WARP == 0){
+#ifdef ARRAY
+                subtraction_set.push_back(v);
+#else
                 subtraction_set.insert_and_update(v);
+                __threadfence_block();
                 subtraction_set.pat2emb[depth] = v;
+#endif
             }
             __threadfence_block();
         }
         GPU_pattern_matching_func<depth + 1>(schedule, vertex_set, subtraction_set, tmp_set, local_ans, edge, vertex);
         if (depth + 1 != MAX_DEPTH) {
             if (threadIdx.x % THREADS_PER_WARP == 0)
+#ifdef ARRAY
+                subtraction_set.pop_back();
+#else
                 subtraction_set.erase_and_update(v);
+#endif
             __threadfence_block();
         }
     }
-#endif
 }
 
 /**

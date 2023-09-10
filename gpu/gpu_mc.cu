@@ -69,11 +69,12 @@ int main(int argc,char *argv[]) {
     using std::chrono::system_clock;
     auto t1 = system_clock::now();
 
-    // bool ok = D.fast_load(g, argv[1]);
-    bool ok = D.load_complete(g, 5);
+    // bool ok = D.load_data(g, DataType::SelfDefined, argv[1], false);
+    bool ok = D.fast_load(g, argv[1]);
+    // bool ok = D.load_complete(g, 80);
 
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s pattern_size\n", argv[0]);
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s graph_file pattern_size\n", argv[0]);
         return 1;
     }
 
@@ -92,7 +93,7 @@ int main(int argc,char *argv[]) {
 
     allTime.check();
 
-    int pattern_size = atoi(argv[1]);
+    int pattern_size = atoi(argv[2]);
 
     printf("motif_size: %d\n", pattern_size);
 
@@ -111,7 +112,7 @@ int main(int argc,char *argv[]) {
         
         bool is_pattern_valid;
         bool use_in_exclusion_optimize = true;
-        Schedule_IEP schedule_iep(p, is_pattern_valid, 1, 1, true, g->v_cnt, g->e_cnt, g->tri_cnt);
+        Schedule_IEP schedule_iep(p, is_pattern_valid, 0, 1, true, g->v_cnt, g->e_cnt, g->tri_cnt);
 
         if (!is_pattern_valid) {
             fprintf(stderr, "pattern is invalid!\n");

@@ -85,17 +85,9 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
 #endif
             }
         }
-        // __syncwarp();
-// printf("lane %d: pat2emb[1] = %u\n", lid, pat2emb[1]);
-            
 
         __threadfence_block();
 
-        // __syncthreads();
-        // if(lid == 0){
-        //     printf("subtraction_set.size1 = %u\n", subtraction_set.get_size());
-        // }
-        // __syncthreads();
         e_index_t i = edge_idx;
         if (i >= edge_num)
             break;
@@ -125,19 +117,16 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
         if (is_zero)
             continue;
 
-        // __syncthreads();
-        // if(lid == 0)
-        //     printf("subtraction_set.size2 = %u\n", subtraction_set.get_size());
-        // __syncthreads();
         unsigned long long local_sum = 0; // local sum (corresponding to an edge index)
-#ifdef ARRAY
         GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
-#else
-        GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
-#endif
         sum += local_sum;
-        // if(local_sum && lid == 0)
-        //     printf("local_sum = %d\n", local_sum);
+//         if(local_sum && lid == 0){
+// #ifdef ARRAY
+//             printf("pat2emb = %u, %u, local_sum = %d\n", subtraction_set.get_data(0), subtraction_set.get_data(1), local_sum);
+// #else
+//             printf("pat2emb = %u, %u, local_sum = %d\n", subtraction_set.pat2emb[0], subtraction_set.pat2emb[1], local_sum);
+// #endif
+//         }
     }
 
     if (lid == 0) {

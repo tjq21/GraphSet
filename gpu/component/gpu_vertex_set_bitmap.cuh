@@ -92,7 +92,7 @@ public:
         return (tmp_data & offset);
     }
 
-    static __device__ uint32_t subtraction_size(const GPUVertexSet_Bitmap& vset1, const GPUVertexSet_Bitmap& vset2, uint32_t min_vertex = 0xffffffff);
+    static __device__ int subtraction_size(const GPUVertexSet_Bitmap& vset1, const GPUVertexSet_Bitmap& vset2, uint32_t min_vertex = 0xffffffff);
 
     __device__ void build_vertex_set(const GPUSchedule* schedule, const GPUVertexSet_Bitmap* vertex_set, uint32_t* input_data, uint32_t input_size, int prefix_id)
     {
@@ -123,19 +123,15 @@ public:
 
     /**
      * @brief `*this = intersect(*this, other)`
+     * @todo speedup with paralellism?
     */
     __device__ void intersection_with(const GPUVertexSet_Bitmap& other){
-        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
-        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
-        for(int i = 0; i < size; i += THREADS_PER_BLOCK){
-            if(i + lid < size){
-                data[i + lid] &= other.data[i + lid];
-            }
+        for(int i = 0; i < size; i++){
+            data[i] &= other.data[i];
         }
         auto tmp_nzc = calculate_non_zero_cnt();
-        if(lid == 0){
-            non_zero_cnt = tmp_nzc;
-        }
+        non_zero_cnt = tmp_nzc;
+        __threadfence_block();
         // printf("Thread %d: non_zero_cnt = %u\n", wid * THREADS_PER_WARP + lid, non_zero_cnt);
     }
 
@@ -226,7 +222,7 @@ private:
 
 };
 
-__device__ uint32_t GPUVertexSet_Bitmap::subtraction_size(const GPUVertexSet_Bitmap& vset1, const GPUVertexSet_Bitmap& vset2, uint32_t min_vertex){
+__device__ int GPUVertexSet_Bitmap::subtraction_size(const GPUVertexSet_Bitmap& vset1, const GPUVertexSet_Bitmap& vset2, uint32_t min_vertex){
     // if(min_vertex == 0)
     //     return 0;
 

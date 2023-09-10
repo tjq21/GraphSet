@@ -124,7 +124,7 @@ bool DataLoader::fast_load(Graph* &g, const char* path)
 }
 
 bool DataLoader::load_data(Graph* &g, DataType type, const char* path, bool binary_input, int oriented_type) {
-    if(type == Patents || type == Orkut || type == complete8 || type == LiveJournal || type == MiCo || type == CiteSeer || type == Wiki_Vote || type == YouTube || type == Friendster) {
+    if(type == Patents || type == Orkut || type == complete8 || type == LiveJournal || type == MiCo || type == CiteSeer || type == Wiki_Vote || type == YouTube || type == Friendster || type == SelfDefined) {
         return general_load_data(g, type, path, binary_input, oriented_type);
     }
 
@@ -231,6 +231,12 @@ bool DataLoader::general_load_data(Graph* &g, DataType type, const char* path, b
             g->tri_cnt = Friendster_tri_cnt;
             break;
         }
+        case DataType::SelfDefined : {
+            int64_t tmp_tri_cnt;
+            read_i64(fp, binary, tmp_tri_cnt);
+            g->tri_cnt = tmp_tri_cnt;
+            break;
+        }
         default : {
             g->tri_cnt = -1;
             break;
@@ -301,15 +307,15 @@ bool DataLoader::general_load_data(Graph* &g, DataType type, const char* path, b
     VertexSet::max_intersection_size = std::max( VertexSet::max_intersection_size, degree[g->v_cnt - 2]);
     delete[] degree;
     if(tmp_v != g->v_cnt) {
-        printf("vertex number error!\n");
+    printf("vertex number error!\n");
     }
     if(tmp_e != g->e_cnt) {
-        printf("edge number error!\n");
+    printf("edge number error!\n");
     }
     if(tmp_v != g->v_cnt || tmp_e != g->e_cnt) {
-        delete g;
-        delete[] e;
-        return false;
+    delete g;
+    delete[] e;
+    return false;
     }
     std::sort(e,e+tmp_e,cmp_pair);
     g->e_cnt = std::unique(e,e+tmp_e) - e;
