@@ -133,35 +133,19 @@ public:
      * @todo speedup with paralellism?
     */
     __device__ void intersection_with(const GPUVertexSet_Bitmap& other){
-        __shared__ uint32_t tmp_result[THREADS_PER_BLOCK];
-
-        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
-        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
-
-        uint32_t *output = tmp_result + wid * THREADS_PER_WARP;
-
-        for(uint32_t i = 0; i < size; i += THREADS_PER_WARP){
-            if(i + lid < size){
-                output[lid] = data[i + lid] & other.data[i + lid];
-            }
-            __syncwarp();
-            #pragma unroll
-            for(uint32_t j = 0; j < THREADS_PER_WARP; j++){
-                data[i + j] = output[j];
-            }
+        for(int i = 0; i < size; i++){
+            data[i] &= other.data[i];
         }
-
-        output[0] = calculate_non_zero_cnt();
-        non_zero_cnt = output[0];
+        auto tmp_nzc = calculate_non_zero_cnt();
+        non_zero_cnt = tmp_nzc;
         __threadfence_block();
-        // printf("Thread %d: non_zero_cnt = %u\n", wid * THREADS_PER_WARP + lid, non_zero_cnt);
     }
 
     /**
      * @brief `*this = intersect(vset, input_data)`
+     * @todo speedup with paralellism?
     */
     __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *input_data, uint32_t data_size){
-        
         clear();
         uint32_t nzc = 0;
         for(int i = 0; i < data_size; i++){
