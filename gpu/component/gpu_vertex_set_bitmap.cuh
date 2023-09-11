@@ -161,33 +161,17 @@ public:
      * @brief `*this = intersect(vset, input_data)`
     */
     __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *input_data, uint32_t data_size){
-        __shared__ bool found[THREADS_PER_BLOCK];
-
-        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
-        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
-
-        bool *output = found + wid * THREADS_PER_WARP;
-
+        
         clear();
         uint32_t nzc = 0;
-        for(uint32_t i = 0; i < data_size; i += THREADS_PER_WARP){
-            if(i + lid < data_size){
-                output[lid] = false;
-                if(vset.has_data(input_data[i + lid])){
-                    output[lid] = true;
-                }
-            }
-
-            #pragma unroll
-            for(int j = 0; j < THREADS_PER_WARP; j++){
-                uint32_t id = i + j;
-                if(output[j]){
-                    atomicOr(&data[id >> 5], 1 << (id & 31));
-                    nzc++;
-                }
+        for(int i = 0; i < data_size; i++){
+            if(vset.has_data(input_data[i])){
+                this->insert(input_data[i]);
+                nzc++;
             }
         }
         non_zero_cnt = nzc;
+        __threadfence_block();
     }
 
     /**
