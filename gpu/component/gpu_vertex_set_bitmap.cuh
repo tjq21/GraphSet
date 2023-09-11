@@ -19,8 +19,8 @@ public:
     GPUVertexSet_Bitmap& operator=(const GPUVertexSet_Bitmap&) = delete;
 
     __device__ void construct(uint32_t v_cnt){
-        vertex_count = v_cnt;
-        size = (v_cnt + 31) / 32;
+        // vertex_count = v_cnt;
+        size = (v_cnt + 31) >> 5;
         non_zero_cnt = 0;
         data = (uint32_t *)malloc(size * sizeof(uint32_t));
         // gpuErrchk(cudaMalloc((void **)&data, size * sizeof(uint32_t)));
@@ -32,14 +32,21 @@ public:
     }
 
     __device__ void init(uint32_t input_size, uint32_t* input_data){
+        __shared__ uint32_t tmp_val[THREADS_PER_BLOCK];
+        
+        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+
+        uint32_t *output = tmp_val + wid * THREADS_PER_WARP;
+
         clear();
         for(uint32_t i = 0; i < input_size; i++){
-            insert(input_data[i]);
+            uint32_t id = input_data[i];
+            atomicOr(&data[id >> 5], 1 << (id & 31));
         }
-        if(threadIdx.x % 32 == 0)
-            non_zero_cnt = input_size;
+        non_zero_cnt = input_size;
     }
-    
+
     __device__ int get_size() const {
         return non_zero_cnt;
     }
@@ -56,7 +63,7 @@ public:
     __device__ void insert_and_update(uint32_t id){
         uint32_t index = id >> 5;
         uint32_t tmp_data = data[index];
-        uint32_t offset = 1 << (id % 32);
+        uint32_t offset = 1 << (id & 31);
         if ((tmp_data & offset) == 0) {
             ++non_zero_cnt;
             atomicOr(&data[index], offset);
@@ -73,7 +80,7 @@ public:
     __device__ void erase_and_update(uint32_t id){
         uint32_t index = id >> 5;
         uint32_t tmp_data = data[index];
-        uint32_t offset = 1 << (id % 32);
+        uint32_t offset = 1 << (id & 31);
         if (tmp_data & offset) {
             --non_zero_cnt;
             atomicAnd(&data[index], ~offset);
@@ -88,7 +95,7 @@ public:
     
     inline __device__ bool has_data(uint32_t id) const {
         uint32_t tmp_data = data[id >> 5];
-        uint32_t offset = 1 << (id % 32);
+        uint32_t offset = 1 << (id & 31);
         return (tmp_data & offset);
     }
 
@@ -126,21 +133,61 @@ public:
      * @todo speedup with paralellism?
     */
     __device__ void intersection_with(const GPUVertexSet_Bitmap& other){
-        for(int i = 0; i < size; i++){
-            data[i] &= other.data[i];
+        __shared__ uint32_t tmp_result[THREADS_PER_BLOCK];
+
+        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+
+        uint32_t *output = tmp_result + wid * THREADS_PER_WARP;
+
+        for(uint32_t i = 0; i < size; i += THREADS_PER_WARP){
+            if(i + lid < size){
+                output[lid] = data[i + lid] & other.data[i + lid];
+            }
+            __syncwarp();
+            #pragma unroll
+            for(uint32_t j = 0; j < THREADS_PER_WARP; j++){
+                data[i + j] = output[j];
+            }
         }
-        auto tmp_nzc = calculate_non_zero_cnt();
-        non_zero_cnt = tmp_nzc;
+
+        output[0] = calculate_non_zero_cnt();
+        non_zero_cnt = output[0];
         __threadfence_block();
         // printf("Thread %d: non_zero_cnt = %u\n", wid * THREADS_PER_WARP + lid, non_zero_cnt);
     }
 
     /**
-     * @brief `*this = intersect(vset, data)`
+     * @brief `*this = intersect(vset, input_data)`
     */
-    __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *data, uint32_t data_size){
-        this->init(data_size, data);
-        this->intersection_with(vset);
+    __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *input_data, uint32_t data_size){
+        __shared__ bool found[THREADS_PER_BLOCK];
+
+        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+
+        bool *output = found + wid * THREADS_PER_WARP;
+
+        clear();
+        uint32_t nzc = 0;
+        for(uint32_t i = 0; i < data_size; i += THREADS_PER_WARP){
+            if(i + lid < data_size){
+                output[lid] = false;
+                if(vset.has_data(input_data[i + lid])){
+                    output[lid] = true;
+                }
+            }
+
+            #pragma unroll
+            for(int j = 0; j < THREADS_PER_WARP; j++){
+                uint32_t id = i + j;
+                if(output[j]){
+                    atomicOr(&data[id >> 5], 1 << (id & 31));
+                    nzc++;
+                }
+            }
+        }
+        non_zero_cnt = nzc;
     }
 
     /**
@@ -156,15 +203,60 @@ public:
     }
 
     __device__ uint32_t get_first() const {
-        for(uint32_t id = 0; id < vertex_count; id++){
-            if(this->has_data(id)) return id;
+        __shared__ bool found[THREADS_PER_BLOCK];
+
+        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+
+        bool *output = found + wid * THREADS_PER_WARP;
+
+        uint32_t idx = 0;
+
+        for(idx = 0; idx < size; idx += THREADS_PER_WARP){
+            uint32_t data_idx = idx + lid;
+            if(data_idx < size && data[data_idx]){
+                found[lid] = true;
+                break;
+            }
+        }
+
+        #pragma unroll
+        for(uint32_t i = 0; i < THREADS_PER_WARP; i++){
+            if(found[idx + i]){
+                uint32_t tmp_data = data[idx + i];
+                return (idx + i) << 5 + __ffs(tmp_data);
+            }
         }
         return UINT32_MAX;
     }
 
     __device__ uint32_t get_next(uint32_t id) const {
-        for(id++; id < vertex_count; id++){
+        __shared__ bool found[THREADS_PER_BLOCK];
+
+        int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+        int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+
+        bool *output = found + wid * THREADS_PER_WARP;
+
+        for(id++; id % 32; id++){
             if(this->has_data(id)) return id;
+        }
+        uint32_t idx = id >> 5;
+
+        for(idx = 0; idx < size; idx += THREADS_PER_WARP){
+            uint32_t data_idx = idx + lid;
+            if(data_idx < size && data[data_idx]){
+                found[lid] = true;
+                break;
+            }
+        }
+
+        #pragma unroll
+        for(uint32_t i = 0; i < THREADS_PER_WARP; i++){
+            if(found[idx + i]){
+                uint32_t tmp_data = data[idx + i];
+                return (idx + i) << 5 + __ffs(tmp_data);
+            }
         }
         return UINT32_MAX;
     }
@@ -178,7 +270,7 @@ public:
                 __threadfence_block();
                 printf("[%x] ", data[i]);
                 __threadfence_block();
-                for(int j = 0, _ = 1; i * 32 + j < vertex_count; j++, _ <<= 1){
+                for(int j = 0, _ = 1; j < 32; j++, _ <<= 1){
                     if(data[i] & _) printf("%d ", i * 32 + j);
                 }
             }
@@ -191,7 +283,7 @@ public:
     // pat2emb[i] means the corresponding vertex in the embedding of the i-th vertex in the pattern
 
 private:
-    uint32_t vertex_count;
+    // uint32_t vertex_count;
     uint32_t size;
     uint32_t *data;
     uint32_t non_zero_cnt;
