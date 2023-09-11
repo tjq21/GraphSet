@@ -138,9 +138,18 @@ public:
     /**
      * @brief `*this = intersect(vset, data)`
     */
-    __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *data, uint32_t data_size){
-        this->init(data_size, data);
-        this->intersection_with(vset);
+    __device__ uint32_t intersect_and_update(const GPUVertexSet_Bitmap& vset, uint32_t *input_data, uint32_t data_size){
+        
+        clear();
+        uint32_t nzc = 0;
+        for(int i = 0; i < data_size; i++){
+            if(vset.has_data(input_data[i])){
+                this->insert(input_data[i]);
+                nzc++;
+            }
+        }
+        non_zero_cnt = nzc;
+        __threadfence_block();
     }
 
     /**
