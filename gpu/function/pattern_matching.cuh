@@ -23,7 +23,7 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
 
         size_t size_edge = g->e_cnt * sizeof(uint32_t);
         size_t size_vertex = (g->v_cnt + 1) * sizeof(e_index_t);
-#ifdef ARRAY
+#if USE_ARRAY == 1
         size_t size_tmp = VertexSet::max_intersection_size * num_total_warps * (schedule.get_total_prefix_num() + 2) *
                           sizeof(uint32_t); // prefix + subtraction + tmp
 #else
@@ -49,7 +49,7 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
             log("  Graph (GB): %.3lf \n", (size_edge + size_vertex) / (1024.0 * 1024 * 1024));
             log("  Global memory usage (GB): %.3lf \n", (size_new_order + size_edge + size_tmp) / (1024.0 * 1024 * 1024));
             log("  Total memory usage (GB): %.3lf \n", (size_edge + size_vertex + size_new_order + size_edge + size_tmp) / (1024.0 * 1024 * 1024) * total_devices);
-#ifdef ARRAY
+#if USE_ARRAY == 1
             log("  Shared memory for vertex set per block: %ld bytes\n",
                 num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet) +
                     schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int));
@@ -83,7 +83,7 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
 
 
 
-#ifdef ARRAY
+#if USE_ARRAY == 1
         block_shmem_size = num_vertex_sets_per_warp * WARPS_PER_BLOCK * sizeof(GPUVertexSet) +
                            schedule.in_exclusion_optimize_vertex_id.size() * WARPS_PER_BLOCK * sizeof(int);
 #else
@@ -124,7 +124,7 @@ struct PatternMatchingDeviceContext : public GraphDeviceContext {
 /**
  * @brief 最终层的容斥原理优化计算。
  */
-#ifdef ARRAY
+#if USE_ARRAY == 1
 __device__ void GPU_pattern_matching_final_in_exclusion(const GPUSchedule *schedule, GPUVertexSet *vertex_set, GPUVertexSet &subtraction_set,
                                                         GPUVertexSet &tmp_set, unsigned long long &local_ans, uint32_t *edge, e_index_t *vertex) {
 #else
@@ -138,7 +138,7 @@ __device__ void GPU_pattern_matching_final_in_exclusion(const GPUSchedule *sched
     int *ans = ((int *)(ans_array + schedule->ans_array_offset)) + schedule->in_exclusion_optimize_vertex_id_size * (threadIdx.x / THREADS_PER_WARP);
 
     for (int i = 0; i < schedule->in_exclusion_optimize_vertex_id_size; ++i) {
-#ifdef ARRAY
+#if USE_ARRAY == 1
         if (schedule->in_exclusion_optimize_vertex_flag[i]) {
             ans[i] = vertex_set[schedule->in_exclusion_optimize_vertex_id[i]].get_size() - schedule->in_exclusion_optimize_vertex_coef[i];
         } else {
@@ -175,7 +175,7 @@ __device__ void GPU_pattern_matching_final_in_exclusion(const GPUSchedule *sched
  * @param partial_embedding Vertices already explored in a embedding, subtraction_set.
  * @param vp Depth.
  */
-#ifdef ARRAY
+#if USE_ARRAY == 1
 __device__ void remove_anti_edge_vertices(GPUVertexSet &out_buf, const GPUVertexSet &in_buf, const GPUSchedule &sched,
                                           const GPUVertexSet &partial_embedding, int vp, const uint32_t *edge, const e_index_t *vertex) {
 #else
@@ -186,7 +186,7 @@ __device__ void remove_anti_edge_vertices(GPUVertexSet_Bitmap &out_buf, const GP
     __shared__ uint32_t block_out_offset[THREADS_PER_BLOCK];
     __shared__ uint32_t block_out_size[WARPS_PER_BLOCK];
 
-#ifdef ARRAY
+#if USE_ARRAY == 1
     auto d_out = out_buf.get_data_ptr();
     auto d_in = in_buf.get_data_ptr();
     int n_in = in_buf.get_size();
@@ -208,7 +208,7 @@ __device__ void remove_anti_edge_vertices(GPUVertexSet_Bitmap &out_buf, const GP
      *     if v1 in N(v): produce_output = false, break
      *   d_out.insert(v1)
     */
-#ifdef ARRAY
+#if USE_ARRAY == 1
     for (int nr_done = 0; nr_done < n_in; nr_done += THREADS_PER_WARP) {
         int i = nr_done + lane;
         bool produce_output = false;
@@ -282,7 +282,7 @@ __device__ void remove_anti_edge_vertices(GPUVertexSet_Bitmap &out_buf, const GP
  *
  */
 template <int depth>
-#ifdef ARRAY
+#if USE_ARRAY == 1
 __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertexSet *vertex_set, GPUVertexSet &subtraction_set, GPUVertexSet &tmp_set,
                                           unsigned long long &local_ans, uint32_t *edge, e_index_t *vertex) {
 #else
@@ -301,7 +301,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
     int loop_set_prefix_id = schedule->get_loop_set_prefix_id(depth);
     auto vset = &vertex_set[loop_set_prefix_id];
 
-#ifdef ARRAY
+#if USE_ARRAY == 1
     int loop_size = vset->get_size();
 
     auto loop_data_ptr = vset->get_data_ptr();
@@ -310,7 +310,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
     // for all restrictions that points to depth (in pattern), get the mininum index in the partial embedding where v_index maps to res.first
     // The newly explored vertex ought to be smaller than all restricted vertices.
     for (int i = schedule->get_restrict_last(depth); i != -1; i = schedule->get_restrict_next(i)){
-#ifdef ARRAY
+#if USE_ARRAY == 1
         if (min_vertex > subtraction_set.get_data(schedule->get_restrict_index(i)))
             min_vertex = subtraction_set.get_data(schedule->get_restrict_index(i));
 #else
@@ -335,7 +335,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
                 printf("%d %d %d %d\n", subtraction_set.get_data(0), subtraction_set.get_data(1), subtraction_set.get_data(2), x);
         }
         return;*/
-#ifdef ARRAY
+#if USE_ARRAY == 1
         int size_after_restrict = lower_bound(loop_data_ptr, loop_size, min_vertex);
         // int size_after_restrict = -1;
         local_ans += unordered_subtraction_size(*vset, subtraction_set, size_after_restrict);
@@ -348,7 +348,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
         return;
     }
 
-#ifdef ARRAY
+#if USE_ARRAY == 1
     for (int i = 0; i < loop_size; ++i) {
         uint32_t v = loop_data_ptr[i];
 #else
@@ -372,7 +372,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
             continue;
         if (depth + 1 != MAX_DEPTH) {
             if (threadIdx.x % THREADS_PER_WARP == 0){
-#ifdef ARRAY
+#if USE_ARRAY == 1
                 subtraction_set.push_back(v);
 #else
                 subtraction_set.insert_and_update(v);
@@ -385,7 +385,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
         GPU_pattern_matching_func<depth + 1>(schedule, vertex_set, subtraction_set, tmp_set, local_ans, edge, vertex);
         if (depth + 1 != MAX_DEPTH) {
             if (threadIdx.x % THREADS_PER_WARP == 0)
-#ifdef ARRAY
+#if USE_ARRAY == 1
                 subtraction_set.pop_back();
 #else
                 subtraction_set.erase_and_update(v);
@@ -400,7 +400,7 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
  *
  */
 template <>
-#ifdef ARRAY
+#if USE_ARRAY == 1
 __device__ void GPU_pattern_matching_func<MAX_DEPTH>(const GPUSchedule *schedule, GPUVertexSet *vertex_set, GPUVertexSet &subtraction_set,
                                                      GPUVertexSet &tmp_set, unsigned long long &local_ans, uint32_t *edge, e_index_t *vertex) {
     // assert(false);

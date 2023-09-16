@@ -31,7 +31,7 @@ double pattern_matching(Graph *g, const Schedule_IEP &schedule_iep) {
     PatternMatchingDeviceContext *context;
     gpuErrchk(cudaMallocManaged((void **)&context, sizeof(PatternMatchingDeviceContext)));
     context->init(g, schedule_iep);
-#ifdef ARRAY
+#if USE_ARRAY == 1
     uint32_t buffer_size = VertexSet::max_intersection_size;
 #else
     uint32_t buffer_size = (g->v_cnt + 31) / 32;
@@ -82,7 +82,7 @@ int main(int argc,char *argv[]) {
         fprintf(stderr, "data load failure :-(\n");
         return 1;
     } 
-#ifdef ARRAY
+#if USE_ARRAY == 1
     fprintf(stderr, "SET-BY-ARRAY\n");
 #else
     fprintf(stderr, "SET-BY-BITMAP\n");

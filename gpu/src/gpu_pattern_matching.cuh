@@ -15,7 +15,7 @@
 __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, PatternMatchingDeviceContext *context) {
     __shared__ e_index_t block_edge_idx[WARPS_PER_BLOCK];
     //之后考虑把tmp buffer都放到shared里来（如果放得下）
-#ifdef ARRAY
+#if USE_ARRAY == 1
     extern __shared__ GPUVertexSet block_vertex_set[];
 #else
     extern __shared__ GPUVertexSet_Bitmap block_vertex_set[];
@@ -35,7 +35,7 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
     int lid = threadIdx.x % THREADS_PER_WARP;            // lane id
     int global_wid = blockIdx.x * WARPS_PER_BLOCK + wid; // global warp id
     e_index_t &edge_idx = block_edge_idx[wid];
-#ifdef ARRAY
+#if USE_ARRAY == 1
     GPUVertexSet *vertex_set = block_vertex_set + wid * num_vertex_sets_per_warp;
 #else
     GPUVertexSet_Bitmap *vertex_set = block_vertex_set + wid * num_vertex_sets_per_warp;
@@ -45,14 +45,14 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
         edge_idx = 0;
         uint32_t offset = buffer_size * global_wid * num_vertex_sets_per_warp;
         for (int i = 0; i < num_vertex_sets_per_warp; ++i) {
-#ifndef ARRAY
+#if USE_ARRAY == 0
             vertex_set[i].construct(buffer_size << 5);
 #endif
             vertex_set[i].set_data_ptr(tmp + offset); // 注意这是个指针+整数运算，自带*4
             offset += buffer_size;
         }
     }
-#ifdef ARRAY
+#if USE_ARRAY == 1
     GPUVertexSet &subtraction_set = vertex_set[num_prefixes];
     GPUVertexSet &tmp_set = vertex_set[num_prefixes + 1];
 #else
@@ -72,7 +72,7 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
             edge_idx = atomicAdd(context->dev_cur_edge, 1);
             e_index_t i = edge_idx;
             if (i < edge_num) {
-#ifdef ARRAY
+#if USE_ARRAY == 1
                 subtraction_set.init();
                 subtraction_set.push_back(edge_from[i]);
                 subtraction_set.push_back(edge[i]);
@@ -121,7 +121,7 @@ __global__ void gpu_pattern_matching(e_index_t edge_num, uint32_t buffer_size, P
         GPU_pattern_matching_func<2>(schedule, vertex_set, subtraction_set, tmp_set, local_sum, edge, vertex);
         sum += local_sum;
 //         if(local_sum && lid == 0){
-// #ifdef ARRAY
+// #if USE_ARRAY == 1
 //             printf("pat2emb = %u, %u, local_sum = %d\n", subtraction_set.get_data(0), subtraction_set.get_data(1), local_sum);
 // #else
 //             printf("pat2emb = %u, %u, local_sum = %d\n", subtraction_set.pat2emb[0], subtraction_set.pat2emb[1], local_sum);

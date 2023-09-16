@@ -17,7 +17,7 @@
 ADD_EXECUTABLE(gpu_mc gpu_mc.cu)
 SET_PROPERTY(TARGET gpu_mc PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 TARGET_LINK_LIBRARIES(gpu_mc graph_mining)
-# ADD_DEFINITIONS(-DARRAY)
+
 # ADD_EXECUTABLE(gpu_graph_unimem gpu_graph_unimem.cu)
 # SET_PROPERTY(TARGET gpu_graph_unimem PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 # TARGET_LINK_LIBRARIES(gpu_graph_unimem graph_mining mpi gomp)
@@ -60,3 +60,5 @@ TARGET_LINK_LIBRARIES(gpu_mc graph_mining)
 # ADD_EXECUTABLE(mc3 mc3.cu)
 # SET_PROPERTY(TARGET mc3 PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 # TARGET_LINK_LIBRARIES(mc3 graph_mining)
+
+configure_file(${CMAKE_CURRENT_LIST_DIR}/cmake_templates/gpu_const.cuh.in ${CMAKE_CURRENT_LIST_DIR}/component/gpu_const.cuh)
