@@ -1,5 +1,6 @@
 {
     "USE_ARRAY": 1,
-    "THREADS_PER_BLOCK": 128,
-    "NUM_BLOCKS": 1024
+    "THREADS_PER_BLOCK": 1024,
+    "NUM_BLOCKS": 128,
+    "IEP_BY_SM": 1
 }

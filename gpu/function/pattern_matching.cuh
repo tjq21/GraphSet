@@ -134,8 +134,12 @@ __device__ void GPU_pattern_matching_final_in_exclusion(const GPUSchedule *sched
     int last_pos = -1;
     long long val;
 
+#if IEP_BY_SM == 1
     extern __shared__ char ans_array[];
     int *ans = ((int *)(ans_array + schedule->ans_array_offset)) + schedule->in_exclusion_optimize_vertex_id_size * (threadIdx.x / THREADS_PER_WARP);
+#else
+    int *ans = (int *)malloc(schedule->in_exclusion_optimize_vertex_id_size * sizeof(int));
+#endif
 
     for (int i = 0; i < schedule->in_exclusion_optimize_vertex_id_size; ++i) {
 #if USE_ARRAY == 1
@@ -342,7 +346,6 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
 #else
         // int size_after_restrict = lower_bound(loop_data_ptr, loop_size, min_vertex);
         local_ans += GPUVertexSet_Bitmap::subtraction_size(*vset, subtraction_set, min_vertex);
-        __threadfence_block();
         // if(threadIdx.x % THREADS_PER_WARP == 0) printf("return 2\n");
 #endif
         return;
@@ -376,7 +379,6 @@ __device__ void GPU_pattern_matching_func(const GPUSchedule *schedule, GPUVertex
                 subtraction_set.push_back(v);
 #else
                 subtraction_set.insert_and_update(v);
-                __threadfence_block();
                 subtraction_set.pat2emb[depth] = v;
 #endif
             }
