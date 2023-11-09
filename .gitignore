@@ -3,3 +3,6 @@ build/
 log/
 reproduce_log/
 **/__pycache__/
+/dataset/
+/cmake_gen/*
+!cmake_gen/driver.py

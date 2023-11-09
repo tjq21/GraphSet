@@ -14,12 +14,12 @@ FLOAT_INF = 1e38
 
 COMMAND_PREFIX = "srun -p V100 --gres=gpu:v132p:1 --exclusive "
 # COMMAND_PREFIX = ""
-DATA_PATH = str(pathlib.Path(__file__).parent.absolute() / ".." / "dataset")
-BUILD_PATH = str(pathlib.Path(__file__).parent.absolute() / ".." / "build")
-PARAM_PATH = str(pathlib.Path(__file__).parent.absolute() / "param.json")
-CONF_PATH = str(pathlib.Path(__file__).parent.absolute() / "best_config.json")
-RESULT_PATH = str(pathlib.Path(__file__).parent.absolute() / "counting_time_cost.txt")
-RECORD_PATH = str(pathlib.Path(__file__).parent.absolute() / "record.json")
+DATA_PATH = pathlib.Path(__file__).parent.absolute() / ".." / "dataset"
+BUILD_PATH = pathlib.Path(__file__).parent.absolute() / ".." / "build"
+PARAM_PATH = pathlib.Path(__file__).parent.absolute() / "param.json"
+CONF_PATH = pathlib.Path(__file__).parent.absolute() / "best_config.json"
+RESULT_PATH = pathlib.Path(__file__).parent.absolute() / "counting_time_cost.txt"
+RECORD_PATH = pathlib.Path(__file__).parent.absolute() / "record.json"
 PARAM_VAL = {
     "USE_ARRAY": [1],
     "THREADS_PER_BLOCK": [32, 64, 128, 256, 512, 1024],
@@ -387,6 +387,11 @@ if __name__ == "__main__":
         if(buffer[INDEX(i,j,size)] == '1')
             add_edge(i,j);
     '''
+
+    for file in [CONF_PATH, PARAM_PATH, RESULT_PATH, RECORD_PATH]:
+        if not file.is_file():
+            with open(file, "w"):
+                pass
 
     manip = Manipulator()
     tuner = Tuner(JOB_NAME, f"{DATA_PATH}/{args.data} " + " ".join([args.graph_size, args.pattern_string, args.use_iep]), manip)
