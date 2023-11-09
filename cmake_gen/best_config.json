@@ -1,0 +1,8 @@
+{
+    "USE_ARRAY": 1,
+    "THREADS_PER_BLOCK": 128,
+    "NUM_BLOCKS": 256,
+    "IEP_BY_SM": 0,
+    "MAXREG": 2,
+    "SORT": 1
+}

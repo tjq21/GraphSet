@@ -12,7 +12,11 @@ class GPUVertexSet;
 
 __device__ void intersection2(uint32_t *tmp, const uint32_t *lbases, const uint32_t *rbases, uint32_t ln, uint32_t rn, uint32_t* p_tmp_size);
 
+#if PARALLEL_INTERSECTION == 1
 static __device__ uint32_t do_intersection(uint32_t*, const uint32_t*, const uint32_t*, uint32_t, uint32_t);
+#else
+static __device__ uint32_t do_intersection_serial(uint32_t*, const uint32_t*, const uint32_t*, uint32_t, uint32_t);
+#endif
 
 __device__ int unordered_subtraction_size(const GPUVertexSet& set0, const GPUVertexSet& set1, int size_after_restrict);
 
@@ -94,7 +98,11 @@ public:
 
     __device__ void intersection_with(const GPUVertexSet& other)
     {
+#if PARALLEL_INTERSECTION == 1
         uint32_t ret = do_intersection(data, data, other.get_data_ptr(), size, other.get_size());
+#else
+        uint32_t ret = do_intersection_serial(data, data, other.get_data_ptr(), size, other.get_size());
+#endif
         if (threadIdx.x % THREADS_PER_WARP == 0)
             size = ret;
         __threadfence_block();
@@ -135,6 +143,7 @@ __device__ uint32_t do_intersection(uint32_t* out, const uint32_t* a, const uint
         uint32_t u = 0;
         if (num_done + lid < na) {
             u = a[num_done + lid]; // u: an element in set a
+#if BINARY_SEARCH == 1
             int mid, l = 0, r = int(nb) - 1;
             while (l <= r) {
                 mid = (l + r) >> 1;
@@ -147,6 +156,17 @@ __device__ uint32_t do_intersection(uint32_t* out, const uint32_t* a, const uint
                     break;
                 }
             }
+#else
+            for(int idx_b = 0; idx_b < nb; idx_b++){
+                if(b[idx_b] == u){
+                    found = 1;
+                    break;
+                }
+                else if(b[idx_b] > u){
+                    break;
+                }
+            }
+#endif
         }
         out_offset[lid] = found;
         __threadfence_block();
@@ -173,6 +193,48 @@ __device__ uint32_t do_intersection(uint32_t* out, const uint32_t* a, const uint
     return out_size;
 }
 
+__device__ uint32_t do_intersection_serial(uint32_t* out, const uint32_t* a, const uint32_t* b, uint32_t na, uint32_t nb)
+{
+    int wid = threadIdx.x / THREADS_PER_WARP; // warp id
+    int lid = threadIdx.x % THREADS_PER_WARP; // lane id
+    int out_size = 0;
+
+    for(int num_done = 0; num_done < na; num_done++){
+        bool found = 0;
+        uint32_t u = 0;
+        if (num_done + lid < na) {
+            u = a[num_done];        // u: an element in set a
+#if BINARY_SEARCH == 1
+            int mid, l = 0, r = int(nb) - 1;
+            while (l <= r) {
+                mid = (l + r) >> 1;
+                if (b[mid] < u) {
+                    l = mid + 1;
+                } else if (b[mid] > u) {
+                    r = mid - 1;
+                } else {
+                    found = 1;
+                    break;
+                }
+            }
+#else
+            for(int idx_b = 0; idx_b < nb; idx_b++){
+                if(b[idx_b] == u){
+                    found = 1;
+                    break;
+                }
+                else if(b[idx_b] > u){
+                    break;
+                }
+            }
+#endif
+        }
+        if(found)
+            out[out_size++] = u;
+    }
+    return out_size;
+}
+
 /**
  * wrapper of search based intersection `do_intersection`
  * 
@@ -188,9 +250,11 @@ __device__ void intersection2(uint32_t *tmp, const uint32_t *lbases, const uint3
     /**
     * @todo 考虑ln < rn <= 32时，每个线程在lbases里面找rbases的一个元素可能会更快
     */
-
+#if PARALLEL_INTERSECTION == 1
     uint32_t intersection_size = do_intersection(tmp, lbases, rbases, ln, rn);
-
+#else
+    uint32_t intersection_size = do_intersection_serial(tmp, lbases, rbases, ln, rn);
+#endif
     if (threadIdx.x % THREADS_PER_WARP == 0)
         *p_tmp_size = intersection_size;
     __threadfence_block();

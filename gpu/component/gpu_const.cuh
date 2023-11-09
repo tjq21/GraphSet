@@ -1,5 +1,7 @@
 #pragma once
 
+#define USE_ARRAY 1
+
 constexpr int THREADS_PER_BLOCK = 128;
 constexpr int THREADS_PER_WARP = 32;
 constexpr int WARPS_PER_BLOCK = THREADS_PER_BLOCK / THREADS_PER_WARP;
@@ -14,3 +16,8 @@ void print_parameter() {
     printf("num_blocks = %d\n", num_blocks);
     printf("cpu_proportion = %lf\n", cpu_proportion);
 }
+
+#define IEP_BY_SM 1
+#define SORT 0
+#define PARALLEL_INTERSECTION 1
+#define BINARY_SEARCH 1

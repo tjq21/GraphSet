@@ -170,6 +170,10 @@ __device__ void GPU_pattern_matching_final_in_exclusion(const GPUSchedule *sched
             local_ans += val * schedule->in_exclusion_optimize_coef[pos];
         }
     }
+    
+#if IEP_BY_SM == 0
+    free(ans);
+#endif
 }
 
 /**

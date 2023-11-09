@@ -16,3 +16,8 @@ void print_parameter() {
     printf("num_blocks = %d\n", num_blocks);
     printf("cpu_proportion = %lf\n", cpu_proportion);
 }
+
+#define IEP_BY_SM @IEP_BY_SM@
+#define SORT @SORT@
+#define PARALLEL_INTERSECTION @PARALLEL_INTERSECTION@
+#define BINARY_SEARCH @BINARY_SEARCH@
