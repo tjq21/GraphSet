@@ -355,7 +355,7 @@ class Tuner:
         assert ret_code == 0, f"Make exited with non-zero code {ret_code}"
 
         # run
-        os.chdir(BUILD_PATH + "/bin")
+        os.chdir(BUILD_PATH / "bin")
 
         print("Running...")
 
@@ -363,12 +363,13 @@ class Tuner:
         #     ret_code = os.system(f"timeout {self.best_time * 2} " + COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
         # else:
         ret_code = os.system(COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
-        with open(RESULT_PATH, "r") as f:
-            time_cost = float(f.readline())
 
         if ret_code != 0:
             print(f"Graph mining program returned non-zero code {ret_code}")
             return FLOAT_INF
+
+        with open(RESULT_PATH, "r") as f:
+            time_cost = float(f.readline())
 
         if time_cost < self.best_time:
             self.best_time = time_cost
@@ -411,8 +412,8 @@ if __name__ == "__main__":
             "BINARY_SEARCH": 1}
         tuner.compile_and_run(param_dict, True)
     else:
-        # best_config = tuner.tune(15, 10, debug_msg=args.debug_msg)
-        best_config = tuner.manipulator.find_maximums(5, 50, 1)
+        best_config = tuner.tune(10, 3, debug_msg=args.debug_msg)
+        # best_config = tuner.manipulator.find_maximums(5, 50, 1)
         print("Best configuration:", best_config[0])
         print(f"Estimated time cost: {best_config[1]:.2f}s")
         with open(CONF_PATH, "w") as f:
