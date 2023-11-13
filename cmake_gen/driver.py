@@ -1,19 +1,17 @@
 import os
 import json
 import time
-import logging
 import pathlib
 import random
 import numpy as np
 import heapq
 import xgboost as xgb
-from typing import List, Set
 import argparse
 
-FLOAT_INF = 1e38
+FLOAT_INF = 1e10
 
-COMMAND_PREFIX = "srun -p V100 --gres=gpu:v132p:1 --exclusive "
-# COMMAND_PREFIX = ""
+# COMMAND_PREFIX = "srun -p V100 --gres=gpu:v132p:1 --exclusive "
+COMMAND_PREFIX = ""
 DATA_PATH = pathlib.Path(__file__).parent.absolute() / ".." / "dataset"
 BUILD_PATH = pathlib.Path(__file__).parent.absolute() / ".." / "build"
 PARAM_PATH = pathlib.Path(__file__).parent.absolute() / "param.json"
@@ -25,7 +23,7 @@ PARAM_VAL = {
     "THREADS_PER_BLOCK": [32, 64, 128, 256, 512, 1024],
     "NUM_BLOCKS": [32, 64, 128, 256, 512, 1024],
     "IEP_BY_SM": [0, 1],
-    "MAXREG": [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024],
+    "MAXREG": range(24, 260, 4),
     "SORT": [0, 1],
     "PARALLEL_INTERSECTION": [0, 1],
     "BINARY_SEARCH": [0, 1]
@@ -33,11 +31,12 @@ PARAM_VAL = {
 
 JOB_NAME = "gpu_graph"
 
-logger = logging.getLogger("tuner")
+SA_N_ITER = 300
+
 parser = argparse.ArgumentParser()
 parser.add_argument('-r', type=bool)
 parser.add_argument('data', type=str)
-parser.add_argument('graph_size', type=str)
+parser.add_argument('pattern_size', type=str)
 parser.add_argument('pattern_string', type=str)
 parser.add_argument('use_iep', type=str, help='<0/1> Use IEP or not')
 parser.add_argument('--debug_msg', default=False, action='store_true', help='Enable output of CMake and Make')
@@ -69,12 +68,14 @@ def dict2list(params: dict) -> list:
 
 
 class Manipulator():
-    def __init__(self, num_warmup_sample: int = 100):
+    def __init__(self, num_warmup_sample: int = 25):
         # self.params = self.read_params(PARAM_PATH)
         self.xs = []
         self.ys = []
         self.best_config = ({}, FLOAT_INF)
         self.trials = []
+        self.predicted_performance = []
+        self.best_performance_record = []
         self.bst = None
         self.num_warmup_sample = num_warmup_sample
         self.xgb_params = {
@@ -84,6 +85,7 @@ class Manipulator():
             "eta": 0.2,
             "verbosity": 0,
             "disable_default_eval_metric": 1,
+            "device": "cuda",
         }
         self.batch_size = 10
 
@@ -93,10 +95,11 @@ class Manipulator():
 
         with open(RECORD_PATH, "r") as f:
             if os.path.getsize(RECORD_PATH) != 0:
-                records = json.load(f)
-                for res in records:
+                record_dict = json.load(f)
+                for res in record_dict["record"]:
                     self.xs.append(res[0])
                     self.ys.append(res[1])
+                self.best_performance_record = record_dict["best_performance_record"]
         assert len(self.xs) == len(self.ys)
         print(f"Loaded {len(self.ys)} records from file.")
 
@@ -123,7 +126,7 @@ class Manipulator():
         return ret
 
 
-    def next_batch(self, batch_size) -> List[dict]:
+    def next_batch(self, batch_size) -> list[dict]:
         '''
         Return a batch of configurations to be tested.
         '''
@@ -143,13 +146,26 @@ class Manipulator():
 
         return ret
 
+
+    def load_init_trials(self, k) -> None:
+        if len(self.ys) == 0:
+            self.trials = [self.random_configuration() for _ in range(k)]
+            self.predicted_performance = [0 for _ in range(k)]
+            return
+
+        if self.bst is None:
+            tmp_matrix = np.asanyarray([dict2list(item) for item in self.xs])
+            perm = np.random.permutation(len(self.xs))
+            dtrain = xgb.DMatrix(tmp_matrix[perm], np.asanyarray(self.ys)[perm])
+            self.bst = xgb.train(self.xgb_params, dtrain, num_boost_round=1000)
+        self.trials, self.predicted_performance = self.find_maximums(k, SA_N_ITER)
+
     
-    def update(self, k:int, inputs: List[dict], results: List[float]) -> None:
+    def update(self, k:int, inputs: list[dict], results: list[float]) -> None:
         '''
         Add a test result to the manipulator.
         XGBoost does not support additional traning, so re-train a model each time.
         '''
-        print("input:", inputs, results)
         if len(inputs) == 0:
             return
 
@@ -160,33 +176,15 @@ class Manipulator():
             self.xs.append(params)
             self.ys.append(res)
 
-        with open(RECORD_PATH, "w") as f:
-            json.dump([[x, y] for x, y in zip(self.xs, self.ys)], f)
-
         if self.bst is None:
             tmp_matrix = np.asanyarray([dict2list(item) for item in self.xs])
-            print("tmp_matrix:", tmp_matrix)
             perm = np.random.permutation(len(self.xs))
             dtrain = xgb.DMatrix(tmp_matrix[perm], np.asanyarray(self.ys)[perm])
             self.bst = xgb.train(self.xgb_params, dtrain, num_boost_round=1000)
         else:
             self.fit(self.xs, self.ys)
 
-        possible_vals = []
-        print("\nAfter update:")
-        for ua in PARAM_VAL['USE_ARRAY']:
-            for tpb in PARAM_VAL['THREADS_PER_BLOCK']:
-                for nb in PARAM_VAL['NUM_BLOCKS']:
-                    for ibs in PARAM_VAL["IEP_BY_SM"]:
-                        for maxreg in PARAM_VAL["MAXREG"]:
-                            tmp = [ua, tpb, nb, ibs, maxreg, 0]
-                            tmp_matrix = xgb.DMatrix(np.asanyarray([tmp]))
-                            tmp_val = self.bst.predict(tmp_matrix)[0]
-                            if tmp_val not in possible_vals:
-                                possible_vals.append(tmp_val)
-        print("Possible values:", possible_vals)
-
-        self.trials = self.find_maximums(k, 40, 5)
+        self.trials, self.predicted_performance = self.find_maximums(k, SA_N_ITER)
         
 
     def fit(self, data_x: list, data_y: list):
@@ -201,24 +199,22 @@ class Manipulator():
         dtrain = xgb.DMatrix(np.asanyarray(dx)[index], np.array(dy)[index])
         self.bst = xgb.train(self.xgb_params, dtrain, num_boost_round=10000)
 
-        print(
-            "XGB train: %.2f\tobs: %d",
-            time.time() - tic,
-            len(data_x),
-        )
+        print(f"XGB train. Time cost: {time.time() - tic}s\t#input: {len(data_x)}")
 
 
-    def predict(self, data_x: List[dict]):
+    def predict(self, data_x: list[dict]):
         if len(self.xs) < self.num_warmup_sample:
             return np.random.uniform(0, 1, len(data_x))     # TODO: add a better range of random score
         dtest = xgb.DMatrix(np.asanyarray([dict2list(item) for item in data_x]))
         return self.bst.predict(dtest)
 
 
-    def find_maximums(self, num: int, n_iter: int, log_interval: int):
+    def find_maximums(self, num: int, n_iter: int):
         '''
         Find the best `num` sets of parameters
         '''
+        log_interval = n_iter // 20
+
         class Pair():
             '''
             class for heapifying tuple[float, dict]
@@ -235,7 +231,7 @@ class Manipulator():
                 return self.first < other.first
 
         tic = time.time()
-        temp = 0.1
+        temp = 100
 
         points = [self.random_configuration() for _ in range(num)]
 
@@ -265,20 +261,14 @@ class Manipulator():
                     in_heap.remove(pop.second)
                     in_heap.append(point)
 
-            temp *= 0.9
+            temp *= 0.97
 
             if log_interval and _ % log_interval == 0:
-                print(f"\rFinding maximums... {(_ / n_iter):.2f}%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, max: {heap_items[0].first}")
-                logger.log(logging.INFO,
-                    f"\rFinding maximums... {(_ / n_iter):.2f}%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, max: {heap_items[0].first}"
-                )
+                print(f"\rFinding the best... {(_ * 100 / n_iter):.2f}%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, worst: {heap_items[0].first}")
 
-        print(f"\rFinding maximums... {(_ / n_iter):.2f}%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, max: {heap_items[0].first}")
-        logger.log(logging.INFO,
-            f"\rFinding maximums... 100%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, max: {heap_items[0].first}"    
-        )
+        print(f"\rFinding the best... {(_ * 100 / n_iter):.2f}%, time elapsed: {(time.time() - tic):.2f}s, temp: {temp:.2f}, worst: {heap_items[0].first}")
 
-        return [x.second for x in heap_items]
+        return [x.second for x in heap_items], [x.first for x in heap_items]
 
 
 class Tuner:
@@ -297,31 +287,51 @@ class Tuner:
         '''
         The final autotune interface
         '''
-        logger.log(logging.INFO, "Start tuning.")
-
         if len(self.manipulator.trials) == 0:
-            configs = [self.manipulator.random_configuration() for _ in range(k)]  # 10 samples for warm-up trial
-        else:
-            configs = self.manipulator.trials
+            self.manipulator.load_init_trials(k)
+
+        configs = self.manipulator.trials
+        predictions = self.manipulator.predicted_performance
 
         for _ in range(max_round):
             print(f"Tuning round {_+1}/{max_round}")
             valid_configs = []
             results = []
-            for config in configs:
+            assert len(configs) == len(predictions)
+
+            # run interested configurations one by one
+            for idx, (config, prediction) in enumerate(zip(configs, predictions)):
+                print(f"Running {idx+1}/{len(predictions)}")
                 time_cost = self.compile_and_run(config, debug_msg)
                 if time_cost != FLOAT_INF:
-                    valid_configs.append(config)
-                    results.append(time_cost)
-            if len(valid_configs) == 0:
-                print("Too many resources required. Stopping...")
-                break
+                    print(f"Predicted: {prediction:.6f}\n")
+                valid_configs.append(config)
+                results.append(time_cost)
+
+            # if len(valid_configs) == 0:
+            #     print("Too many resources required. Stopping...")
+            #     break
+
+            # update XGBoost with newly-yielded results
             self.manipulator.update(k, valid_configs, results)
             configs = self.manipulator.trials
+            predictions = self.manipulator.predicted_performance
+            self.manipulator.best_performance_record.append(self.manipulator.best_config[1])
+
+            # print and record results
             print("len(valid_configs) =",len(valid_configs))
             print(f"Round {_+1} / {max_round} Best performance: {self.manipulator.best_config[1]:.2f}s")
-            logger.log(logging.INFO, f"Round {_+1} / {max_round} Best performance: {self.manipulator.best_config[1]:.2f}s")
-
+            print("Tuning record:")
+            for idx, best_perf in enumerate(self.manipulator.best_performance_record):
+                print(f"\t{idx}\t{best_perf:.4f}s")
+            with open(RECORD_PATH, "w") as f:
+                dump_dict = {
+                    "record": [[x, y] for x, y in zip(self.manipulator.xs, self.manipulator.ys)],
+                    "best_performance_record": self.manipulator.best_performance_record
+                }
+                json.dump(dump_dict, f, indent=4)
+            with open(CONF_PATH, "w") as f:
+                json.dump(self.manipulator.best_config[0], fp=f, indent=4)
         return self.manipulator.best_config
 
 
@@ -329,14 +339,21 @@ class Tuner:
         '''
         Compile using the given patameters and return the time cost.
         '''
-        print(f"config = {param_dict}")
+        # print configuration
+        print("config:")
+        for key, val in param_dict.items():
+            print(f"\t{key}:\t{val}")
 
+        # build cmake command
         definitions = ""
 
         for key, val in param_dict.items():
             definitions += f"-D{key}={val} "
 
-        print(BUILD_PATH)
+        if not BUILD_PATH.exists():
+            print("mkdir " + str(BUILD_PATH))
+            os.mkdir(BUILD_PATH)
+        print("cd " + str(BUILD_PATH))
         os.chdir(BUILD_PATH)
         if debug_msg:
             command = "cmake " + definitions + ".."
@@ -346,6 +363,7 @@ class Tuner:
         ret_code = os.system(command)
         assert ret_code == 0, f"CMake exited with non-zero code {ret_code}"
 
+        # make
         if debug_msg:
             command = "make -j"
         else:
@@ -355,26 +373,29 @@ class Tuner:
         assert ret_code == 0, f"Make exited with non-zero code {ret_code}"
 
         # run
+        if not BUILD_PATH.exists():
+            os.mkdir(BUILD_PATH)
         os.chdir(BUILD_PATH / "bin")
 
         print("Running...")
 
         # if self.best_time != FLOAT_INF:
-        #     ret_code = os.system(f"timeout {self.best_time * 2} " + COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
+        ret_code = os.system(f"timeout {FLOAT_INF} " + COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
         # else:
-        ret_code = os.system(COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
+        #     ret_code = os.system(COMMAND_PREFIX + "./" + " ".join([self.job, self.options]) + " > /dev/null")
 
         if ret_code != 0:
-            print(f"Graph mining program returned non-zero code {ret_code}")
+            print(f"Graph mining program returned non-zero code {ret_code}\n")
             return FLOAT_INF
 
+        # record results
         with open(RESULT_PATH, "r") as f:
             time_cost = float(f.readline())
 
         if time_cost < self.best_time:
             self.best_time = time_cost
 
-        print(f"Time cost: {time_cost:.2f}s\n")
+        print(f"Time cost: {time_cost:.6f}s")
 
         return time_cost
 
@@ -395,27 +416,32 @@ if __name__ == "__main__":
                 pass
 
     manip = Manipulator()
-    tuner = Tuner(JOB_NAME, f"{DATA_PATH}/{args.data} " + " ".join([args.graph_size, args.pattern_string, args.use_iep]), manip)
+    tuner = Tuner(JOB_NAME, f"{DATA_PATH}/{args.data} " + " ".join([args.pattern_size, args.pattern_string, args.use_iep]), manip)
     if args.run_best_config:
         param_dict = manip.read_params(CONF_PATH)
         tuner.compile_and_run(param_dict, True)
     elif args.run_default_config:
         param_dict = {
             "USE_ARRAY": 1,
-            "THREADS_PER_BLOCK": 1024,
-            "NUM_BLOCKS": 128,
+            "THREADS_PER_BLOCK": 128,
+            "NUM_BLOCKS": 1024,
             "IEP_BY_SM": 1,
-            "LIMIT_REG": 1,
             "MAXREG": 64,
             "SORT": 0,
             "PARALLEL_INTERSECTION": 1,
             "BINARY_SEARCH": 1}
         tuner.compile_and_run(param_dict, True)
+    elif args.record:
+        print("Tuning records:")
+        for idx, record in enumerate(manip.best_performance_record):
+            print(f"\t{idx}\t{record:.6f}")
     else:
-        best_config = tuner.tune(10, 3, debug_msg=args.debug_msg)
-        # best_config = tuner.manipulator.find_maximums(5, 50, 1)
+        best_config = tuner.tune(10, 10, debug_msg=args.debug_msg)
         print("Best configuration:", best_config[0])
         print(f"Estimated time cost: {best_config[1]:.2f}s")
         with open(CONF_PATH, "w") as f:
             json.dump(best_config[0], f, indent=4)
         print("Best configuration dumped in ./best_config.json")
+        print("Tuning record:")
+        for idx, best_perf in enumerate(tuner.manipulator.best_performance_record):
+            print(f"\t{idx}\t{best_perf:.4f}s")
