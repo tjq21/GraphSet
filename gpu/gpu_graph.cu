@@ -22,6 +22,14 @@ bool cmp_degree_gt(std::pair<int,int> a,std::pair<int,int> b) {
     return a.second > b.second;
 }
 
+bool cmp_degree_lt(std::pair<int,int> a,std::pair<int,int> b) {
+    return a.second < b.second;
+}
+
+bool cmp_pair(std::pair<int,int> a,std::pair<int,int> b) {
+    return a.first < b.first || (a.first == b.first && a.second < b.second);
+}
+
 void pattern_matching(Graph *g, const Schedule_IEP &schedule_iep) {
     tmpTime.check();
     PatternMatchingDeviceContext *context;
@@ -100,13 +108,13 @@ int main(int argc, char *argv[]) {
     e_index_t tmp_e = 0;
     for(v_index_t i = 0; i < g->v_cnt; i++){
         degree[i] = g->vertex[i+1] - g->vertex[i];
+        rank[i] = std::make_pair(i,degree[i]);
         for(e_index_t j = g->vertex[i]; j < g->vertex[i+1]; j++){
             e[tmp_e++] = std::make_pair(i, g->edge[j]);
         }
     }
 
     int *new_id = new v_index_t[g->v_cnt];
-    for(int i = 0; i < g->v_cnt; ++i) rank[i] = std::make_pair(i,degree[i]);
     std::sort(rank, rank + g->v_cnt, cmp_degree_gt);
     for(v_index_t i = 0; i < g->v_cnt; ++i) new_id[rank[i].first] = i;
     for(e_index_t i = 0; i < g->e_cnt; ++i) {
@@ -116,6 +124,37 @@ int main(int argc, char *argv[]) {
 
     delete[] rank;
     delete[] new_id;
+
+    std::sort(e,e+tmp_e,cmp_pair);
+    g->e_cnt = std::unique(e,e+tmp_e) - e;
+    for(unsigned int i = 0; i < g->e_cnt - 1; ++i)
+        if(e[i] == e[i+1]) {
+            fprintf(stderr, "have same edge\n");
+            delete g;
+            delete[] e;
+            return false;
+        }
+    g->edge = new v_index_t[g->e_cnt];
+    g->vertex = new e_index_t[g->v_cnt + 1];
+    bool* have_edge = new bool[g->v_cnt];
+    int lst_v = -1;
+    memset(have_edge, 0, g->v_cnt * sizeof(bool));
+    for(e_index_t i = 0; i < g->e_cnt; ++i) {
+        if(e[i].first != lst_v) {
+            have_edge[e[i].first] = true;
+            g->vertex[e[i].first] = i;
+        }
+        lst_v = e[i].first;
+        g->edge[i] = e[i].second;
+    }
+    g->vertex[g->v_cnt] = g->e_cnt;
+    for(int i = g->v_cnt - 1; i >= 0; --i)
+        if(!have_edge[i]) {
+            g->vertex[i] = g->vertex[i+1];
+        }
+    delete[] e;
+    delete[] have_edge;
+    delete[] degree;
 #endif
 
     auto t2 = system_clock::now();
